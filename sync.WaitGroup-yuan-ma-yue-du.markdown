@@ -36,6 +36,7 @@ type WaitGroup struct {
 
 ### Tip1 nocopy
 为什么WaitGroup不允许被复制, [https://bronzesword.medium.com/what-does-nocopy-after-first-use-mean-in-golang-and-how-12396c31de47](https://bronzesword.medium.com/what-does-nocopy-after-first-use-mean-in-golang-and-how-12396c31de47)
+
 > Most of the time it is required so for safety reasons, for example you have a struct with a pointer field and you don’t want it to be copied since a shallow copy will make these two hold the same pointer and be unsafe.
 
 翻译一下是由于安全原因, 假如另一个指针指向了WaitGroup.state1的地址将是不安全的, 因为这个数组保存着计数器的值
