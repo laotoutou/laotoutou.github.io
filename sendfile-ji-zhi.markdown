@@ -23,5 +23,6 @@ write(socket, tmp_buf, len);
 我理解是因为DMA(Direct Memory Access)只是准备数据, 只是给cpu发送信号表示数据准备好了, 但是还是需要cpu去调度, 而不能主动发送
 
 使用场景:
+
 1. nginx的静态资源分发
 2. kafka消费者读取数据: 从磁盘拷贝到内核缓冲区, 再从内核缓冲区到网卡缓冲区

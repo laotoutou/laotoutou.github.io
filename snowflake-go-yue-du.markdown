@@ -11,12 +11,14 @@ github地址：[https://github.com/bwmarrin/snowflake](https://github.com/bwmarr
 这是一款大数据量下的id生成器的snowflake-golang实现，snowflake生成的id (int64类型)包含毫秒时间戳、机器id、同一毫秒下的自增id这3部分数据，这里面主要是位运算的妙用(好多开源项目都会用到位运算)
 
 用int64的64bit存储以下部分：
+
 * 12bit的自增id **step**(同一毫秒下)
 * 10bit的机器id **node**(多台机器)
 * 41bit的毫秒时间间距 **time**(不用从1970开始算)
 * 1bit的unset 预留
 
 这几个参数,12bit 10bit 41bit 1bit其实都可以根据自己情况自定义：
+
 * 41bit的毫秒**time**最多可以表示``` ((1<<41)-1) / (86400*1000*465) = 69.7```年(减1是因为包括0)
 * 10bit的**node**最多可表示```(1<<10)-1=1023```个机器
 * 12bit的**step**同一毫秒最多可表示```(1<<12)-1=4095```个自增id (同一机器同一毫秒生产的id数目大于4095怎么办，代码就体现了)
@@ -71,6 +73,7 @@ func NewNode(node int64) (*Node, error) {
 ```
 
 以上的StepBits, NodeBits, Epoch都是配置项
+
 * StepBits = 12
 * NodeBits = 10
 * Epoch = 1288834974657 (毫秒时间戳，这里表示的是2010年)
@@ -141,4 +144,4 @@ func (f ID) Step() int64 {
 }
 ```
 
-生成id时用的或运算，反推用与运算。本菜鸟切实体会到了位运算的精妙
+生成id时用的或运算，反推用与运算
