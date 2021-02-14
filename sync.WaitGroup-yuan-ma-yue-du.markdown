@@ -82,6 +82,10 @@ state()会被Add()和Wait()调用, 用于获取两个变量statep和semap
 * statep是64位变量, 而这个变量保存了2个数据: counter和waiter. 高32位保存counter, 低32位保存waiter. 具体怎么做的看Add方法
 * semap为信号量, 执行wait的goroutine通过信号量semap阻塞(runtime_Semacquire), 等待被被子goroutine通过信号量semap唤醒(runtime_Semrelease)
 
+#### 为什么把waiter和counter打包
+
+可以看下sync.WaitGroup的提交历史, 在之前的某个版本里面, waiter、counter以及semap确实是分开的, 但是却多了一个互斥锁, 而把waiter和counter打包可以通过原子操作代替锁. 关于这个改动的review: [https://go-review.googlesource.com/c/go/+/4117/](https://go-review.googlesource.com/c/go/+/4117/)
+
 #### 为什么要内存对齐?
 
 由于内存的布局, 操作系统访问内存不是按变量直接访问, 而是按照字word获取内存数据, 一次内存访问获取一个word, 比如32位架构的机器一次只能寻址32位, 也就是4字节, 所以32位机器的字长word为4字节, 而64位架构机器的字长word为8字节
@@ -269,3 +273,5 @@ func (wg *WaitGroup) Wait() {
 [内存布局](https://gfw.go101.org/article/memory-layout.html)
 
 [Go中由WaitGroup引发对内存对齐思考](https://www.luozhiyun.com/archives/429)
+
+[sync.WaitGroup将waiter和counter打包的提交历史](https://go-review.googlesource.com/c/go/+/4117/)
