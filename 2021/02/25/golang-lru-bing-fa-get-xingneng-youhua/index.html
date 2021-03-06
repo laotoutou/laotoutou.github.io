@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="renderer" content="webkit">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta name="google-site-verification" content="TZE0rZyIqLl10trYu3BWBWa1Vmz6HFwhb2OcNEK4u-s" />
+     <link rel="shortcut icon" href= /img/favicon.ico >
+    <title>
+        laotoutou
+    </title>
+    <meta name="description" content= laotoutou's blog >
+    <meta name="keywords" content= laotoutou, 黄志浩, golang >
+    
+<link rel="stylesheet" href="/libs/highlight/styles/monokai-sublime.css">
+
+    
+<link rel="stylesheet" href="/libs/font-awesome/css/font-awesome.min.css">
+
+    
+<link rel="stylesheet" href="/css/style.css">
+
+<meta name="generator" content="Hexo 5.4.0"></head>
+<body id="bodyx">
+    <div class="hd posts">
+    <a href="/index.html"><i class="fa fa-home
+ replay-btn" aria-hidden="true"></i></a>
+    <div class="post-title">
+        <p>
+            lru并发get性能优化
+        </p>
+        <hr>
+    </div>
+    <div class="post-content">
+        <p>LRU(Least recently used)由一个字典和链表组成, 字典的作用是快速定位到目标元素, 但是只用字典不方便做淘汰机制, 因此需要一个链表维护各个元素的访问时间, 当元素总数超过指定大小时, 删除链表最后元素.</p>
+<p>这导致每次Get操作需要将链表对应元素移动到链表头部, 而对于并发情况下的写操作, 需要用互斥原语保证操作的正确性, 互斥锁导致的问题是即使在多核情况下, 同一时刻只能有一个线程Get, 这必然影响并发性能</p>
+<p>那么如何减小锁粒度, 这里有几种思路:</p>
+<h2 id="分片"><a href="#分片" class="headerlink" title="分片"></a>分片</h2><p>对key做hash, 根据hash值将key映射到不同的lru链表中. 这是一种比较常见的思路, 分片之后同一个lru的Get在同一时刻仍然是互斥的, 但是各个lru之间是可以并发访问的.</p>
+<p>但是分片的数量不能过多, 否则不利于缓存淘汰. 考虑到cpu调度时同一时刻最大并行数为cpu核心数, 这里设置为cpu核心数即可.</p>
+<p>但是需要选择合适的hash函数, 使key分布均匀且hash成本不大于获取互斥锁的成本</p>
+<p>这里推荐使用times33哈希函数, 简单高效</p>
+<h2 id="无锁数据结构"><a href="#无锁数据结构" class="headerlink" title="无锁数据结构"></a>无锁数据结构</h2><p>无锁数据结构是通过硬件提供的原子操作指令代替操作系统系统的锁, 但是对于链表只能用于单链表元素的新增和删除.</p>
+<p>lru中的链表需要是包含前后指针的链表, 原因是对于链表元素的移动, 需要获取前后结点, 因此对于lru无法使用无锁链表</p>
+<h2 id="互斥锁改读写锁"><a href="#互斥锁改读写锁" class="headerlink" title="互斥锁改读写锁"></a>互斥锁改读写锁</h2><p>具体方式是创建lru时, 启动一个单线程/协程, 用来专门对链表做更新操作, 而对外的接口直接操作字典, 这种方式可以将原来的互斥锁改为读写锁.</p>
+<p>golang的goroutine+channel很适合使用这种方式, 创建一个goroutine最少只用2k内存, 而goroutine之间使用channel进行同步</p>
+<h2 id="减小锁的次数"><a href="#减小锁的次数" class="headerlink" title="减小锁的次数"></a>减小锁的次数</h2><p>lru是在每次命中后将链表元素移动到链表头结点, 通过增加命中次数限制锁的次数, 比如设置命中3次才移动到头结点, 但是这种方式影响lru的准确性</p>
+<h1 id="tslru做的优化"><a href="#tslru做的优化" class="headerlink" title="tslru做的优化:"></a>tslru做的优化:</h1><p><a target="_blank" rel="noopener" href="https://github.com/laotoutou/golang-lru">https://github.com/laotoutou/golang-lru</a></p>
+<p>这里使用了golang-lru的接口, 实现了tslru: thread safe lru. 在git仓库的tslru分支下可以找到源代码</p>
+<h2 id="单协程"><a href="#单协程" class="headerlink" title="单协程"></a>单协程</h2><p>创建tslru对象时, 启动一个协程从channel中获取数据进行更新/删除操作. get命中之后可以讲元素放到channel中异步操作</p>
+<h2 id="内存池"><a href="#内存池" class="headerlink" title="内存池"></a>内存池</h2><p>考虑到lru固定大小, 在达到固定大小时, 需要删除末尾元素, 之后的add操作需要创建一个新的元素, 可以使用内存池减小gc压力</p>
+<h2 id="sync-Map代替原生map-sync-RWMutex"><a href="#sync-Map代替原生map-sync-RWMutex" class="headerlink" title="sync.Map代替原生map + sync.RWMutex"></a>sync.Map代替原生map + sync.RWMutex</h2><p>sync.Map的通过维护一个只读map, 从而提升并发读性能. 但是sync.Map没有对外提供获取map长度的方法,因此需要在外层维护一个size字段.</p>
+<p>引入size字段后引入一个新的问题: 在取消互斥锁的情况下, 如何保证sync.Map和size字段原子更新? </p>
+<p>虽然没有了锁, 但是多了一个单线程, 可以将对sync.Map的更新操作放在单线程里面, 更新sync.Map后使用硬件提供的原子操作更新size</p>
+<p>为什么要原子更新size, 直接更新不行吗? </p>
+<p>不行, 因为size需要对外提供获取长度的方法, 而高级语言的赋值在硬件层面并不是原子操作, 这里使用golang提供的atomic原子更新方法</p>
+<p>使用以上几点可以显著增加lru的并发get性能, 但是add性能下降, 原因是add操作需要等待channel中的操作结束, 同时sync.Map的并发set性能也比原生map+锁的性能差, 因此通过第3点弥补add性能</p>
+<h2 id="分片-1"><a href="#分片-1" class="headerlink" title="分片"></a>分片</h2><p>使用times33哈希函数对key做hash, 将不同的key映射到不同的lru中, 桶的个数为cpu核心数</p>
+<h3 id="不同hash函数性能对比"><a href="#不同hash函数性能对比" class="headerlink" title="不同hash函数性能对比"></a>不同hash函数性能对比</h3><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">➜  go test src&#x2F;testdir&#x2F;hash_test.go -bench&#x3D;.</span><br><span class="line">goos: darwin</span><br><span class="line">goarch: amd64</span><br><span class="line">BenchmarkFnv-4     	25169342	        45.9 ns&#x2F;op</span><br><span class="line">BenchmarkSm-4      	26317040	        43.5 ns&#x2F;op</span><br><span class="line">BenchmarkCrc32-4   	23452971	        51.3 ns&#x2F;op</span><br><span class="line">BenchmarkMur-4     	86075402	        13.9 ns&#x2F;op</span><br><span class="line">BenchmarkDjb-4     	84505095	        14.3 ns&#x2F;op</span><br><span class="line">PASS</span><br><span class="line">ok  	command-line-arguments	6.104s</span><br></pre></td></tr></table></figure>
+
+<p>因为使用相对简单,性能高的djb算法. </p>
+<p>测试代码:</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br></pre></td><td class="code"><pre><span class="line">import (</span><br><span class="line">	&quot;hash&#x2F;crc32&quot;</span><br><span class="line">	&quot;hash&#x2F;fnv&quot;</span><br><span class="line">	&quot;testing&quot;</span><br><span class="line"></span><br><span class="line">	&quot;github.com&#x2F;creachadair&#x2F;cityhash&quot;</span><br><span class="line">	&quot;github.com&#x2F;huichen&#x2F;murmur&quot;</span><br><span class="line">)</span><br><span class="line"></span><br><span class="line">const (</span><br><span class="line">	key  &#x3D; &quot;family:1234567&quot;</span><br><span class="line">	mask &#x3D; 1023</span><br><span class="line">)</span><br><span class="line"></span><br><span class="line">func BenchmarkFnv(b *testing.B) &#123;</span><br><span class="line">	for i :&#x3D; 0; i &lt; b.N; i++ &#123;</span><br><span class="line">		h :&#x3D; fnv.New32a()</span><br><span class="line">		h.Write([]byte(key))</span><br><span class="line">		_ &#x3D; h.Sum32() &amp; mask</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func BenchmarkSm(b *testing.B) &#123;</span><br><span class="line">	for i :&#x3D; 0; i &lt; b.N; i++ &#123;</span><br><span class="line">		_ &#x3D; cityhash.Hash32([]byte(key)) &amp; mask</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func BenchmarkCrc32(b *testing.B) &#123;</span><br><span class="line">	for i :&#x3D; 0; i &lt; b.N; i++ &#123;</span><br><span class="line">		_ &#x3D; crc32.ChecksumIEEE([]byte(key))</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func BenchmarkMur(b *testing.B) &#123;</span><br><span class="line">	for i :&#x3D; 0; i &lt; b.N; i++ &#123;</span><br><span class="line">		_ &#x3D; murmur.Murmur3([]byte(key))</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">&#x2F;*</span><br><span class="line">unsigned long</span><br><span class="line">    hash(unsigned char *str)</span><br><span class="line">    &#123;</span><br><span class="line">        unsigned long hash &#x3D; 5381;</span><br><span class="line">        int c;</span><br><span class="line"></span><br><span class="line">        while (c &#x3D; *str++)</span><br><span class="line">            hash &#x3D; ((hash &lt;&lt; 5) + hash) + c; &#x2F;&#x2F; hash * 33 + c</span><br><span class="line"></span><br><span class="line">        return hash;</span><br><span class="line">    &#125;</span><br><span class="line">*&#x2F;</span><br><span class="line"></span><br><span class="line">func BenchmarkDjb(b *testing.B) &#123;</span><br><span class="line">	for i :&#x3D; 0; i &lt; b.N; i++ &#123;</span><br><span class="line">		_ &#x3D; djb(key)</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func djb(key string) uint32 &#123;</span><br><span class="line">	var h rune &#x3D; 5381</span><br><span class="line">	for _, r :&#x3D; range key &#123;</span><br><span class="line">		h &#x3D; ((h &lt;&lt; 5) + h) + r</span><br><span class="line">	&#125;</span><br><span class="line">	return uint32(h)</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="性能对比"><a href="#性能对比" class="headerlink" title="性能对比"></a>性能对比</h2><p>这里用tslru与golang-lru, ccache做并发get性能对比:</p>
+<p>测试标准是1s执行的get数, 4个协程并发执行</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">➜ go run src&#x2F;testdir&#x2F;main.go</span><br><span class="line">glru  6239617</span><br><span class="line">ts  14495863</span><br><span class="line">cs  13136426</span><br></pre></td></tr></table></figure>
+
+<p>测试代码:</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br><span class="line">104</span><br><span class="line">105</span><br><span class="line">106</span><br><span class="line">107</span><br><span class="line">108</span><br><span class="line">109</span><br><span class="line">110</span><br><span class="line">111</span><br><span class="line">112</span><br><span class="line">113</span><br><span class="line">114</span><br><span class="line">115</span><br><span class="line">116</span><br><span class="line">117</span><br><span class="line">118</span><br><span class="line">119</span><br><span class="line">120</span><br><span class="line">121</span><br><span class="line">122</span><br><span class="line">123</span><br><span class="line">124</span><br><span class="line">125</span><br><span class="line">126</span><br><span class="line">127</span><br></pre></td><td class="code"><pre><span class="line">import (</span><br><span class="line">	&quot;fmt&quot;</span><br><span class="line">	&quot;strconv&quot;</span><br><span class="line">	&quot;sync&#x2F;atomic&quot;</span><br><span class="line">	&quot;time&quot;</span><br><span class="line"></span><br><span class="line">	lru2 &quot;golang-lru&quot;</span><br><span class="line"></span><br><span class="line">	lru &quot;github.com&#x2F;hashicorp&#x2F;golang-lru&quot;</span><br><span class="line">	&quot;github.com&#x2F;karlseguin&#x2F;ccache&quot;</span><br><span class="line">)</span><br><span class="line"></span><br><span class="line">func main() &#123;</span><br><span class="line">	glru()</span><br><span class="line">	ts()</span><br><span class="line">	clru()</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func c(c *ccache.Cache) &#123;</span><br><span class="line">	t :&#x3D; time.After(time.Second)</span><br><span class="line">	for i :&#x3D; 1; atomic.LoadInt32(&amp;cstop) &#x3D;&#x3D; 0; i++ &#123;</span><br><span class="line">		select &#123;</span><br><span class="line">		case &lt;-t:</span><br><span class="line">			atomic.SwapInt32(&amp;cstop, 1)</span><br><span class="line">			return</span><br><span class="line">		default:</span><br><span class="line">			_ &#x3D; c.Get(strconv.Itoa(i &amp; (i - 1)))</span><br><span class="line">			&#x2F;&#x2F;c.Add(strconv.Itoa(i), i)</span><br><span class="line">			atomic.AddInt32(&amp;cnum, 1)</span><br><span class="line">		&#125;</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func g(c *lru.Cache) &#123;</span><br><span class="line">	t :&#x3D; time.After(time.Second)</span><br><span class="line">	for i :&#x3D; 1; atomic.LoadInt32(&amp;gstop) &#x3D;&#x3D; 0; i++ &#123;</span><br><span class="line">		select &#123;</span><br><span class="line">		case &lt;-t:</span><br><span class="line">			atomic.SwapInt32(&amp;gstop, 1)</span><br><span class="line">			return</span><br><span class="line">		default:</span><br><span class="line">			_, _ &#x3D; c.Get(strconv.Itoa(i &amp; (i - 1)))</span><br><span class="line">			&#x2F;&#x2F;c.Add(strconv.Itoa(i), i)</span><br><span class="line">			atomic.AddInt32(&amp;gnum, 1)</span><br><span class="line">		&#125;</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func t(c *lru2.TSCache) &#123;</span><br><span class="line">	t :&#x3D; time.After(time.Second)</span><br><span class="line">	for i :&#x3D; 1; atomic.LoadInt32(&amp;tstop) &#x3D;&#x3D; 0; i++ &#123;</span><br><span class="line">		select &#123;</span><br><span class="line">		case &lt;-t:</span><br><span class="line">			atomic.SwapInt32(&amp;tstop, 1)</span><br><span class="line">			return</span><br><span class="line">		default:</span><br><span class="line">			_, _ &#x3D; c.Get(strconv.Itoa(i &amp; (i - 1)))</span><br><span class="line">			&#x2F;&#x2F;c.Add(strconv.Itoa(i), i)</span><br><span class="line">			atomic.AddInt32(&amp;tnum, 1)</span><br><span class="line">		&#125;</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">var gnum, gstop int32</span><br><span class="line"></span><br><span class="line">func glru() &#123;</span><br><span class="line">	c, err :&#x3D; lru.New(5)</span><br><span class="line">	if err !&#x3D; nil &#123;</span><br><span class="line">		fmt.Println(err)</span><br><span class="line">		return</span><br><span class="line">	&#125;</span><br><span class="line"></span><br><span class="line">	c.Add(&quot;1&quot;, 1)</span><br><span class="line">	c.Add(&quot;2&quot;, 2)</span><br><span class="line">	c.Add(&quot;3&quot;, 3)</span><br><span class="line">	c.Add(&quot;4&quot;, 4)</span><br><span class="line">	c.Add(&quot;5&quot;, 5)</span><br><span class="line"></span><br><span class="line">	go g(c)</span><br><span class="line">	go g(c)</span><br><span class="line">	go g(c)</span><br><span class="line">	go g(c)</span><br><span class="line"></span><br><span class="line">	time.Sleep(time.Second * 2)</span><br><span class="line">	fmt.Println(&quot;glru &quot;, gnum)</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">var tstop, tnum int32</span><br><span class="line"></span><br><span class="line">func ts() &#123;</span><br><span class="line">	c, err :&#x3D; lru2.NewTSCache(5, 4)</span><br><span class="line">	if err !&#x3D; nil &#123;</span><br><span class="line">		fmt.Println(err)</span><br><span class="line">		return</span><br><span class="line">	&#125;</span><br><span class="line"></span><br><span class="line">	c.Add(&quot;1&quot;, 1)</span><br><span class="line">	c.Add(&quot;2&quot;, 2)</span><br><span class="line">	c.Add(&quot;3&quot;, 3)</span><br><span class="line">	c.Add(&quot;4&quot;, 4)</span><br><span class="line">	c.Add(&quot;5&quot;, 5)</span><br><span class="line"></span><br><span class="line">	go t(c)</span><br><span class="line">	go t(c)</span><br><span class="line">	go t(c)</span><br><span class="line">	go t(c)</span><br><span class="line">	time.Sleep(time.Second * 2)</span><br><span class="line">	fmt.Println(&quot;ts &quot;, tnum)</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">var cstop, cnum int32</span><br><span class="line"></span><br><span class="line">func clru() &#123;</span><br><span class="line">	var cache &#x3D; ccache.New(ccache.Configure())</span><br><span class="line">	cache.Set(&quot;1&quot;, 1, time.Minute*10)</span><br><span class="line">	cache.Set(&quot;2&quot;, 2, time.Minute*10)</span><br><span class="line">	cache.Set(&quot;3&quot;, 3, time.Minute*10)</span><br><span class="line">	cache.Set(&quot;4&quot;, 4, time.Minute*10)</span><br><span class="line">	cache.Set(&quot;5&quot;, 5, time.Minute*10)</span><br><span class="line"></span><br><span class="line">	go c(cache)</span><br><span class="line">	go c(cache)</span><br><span class="line">	go c(cache)</span><br><span class="line">	go c(cache)</span><br><span class="line">	time.Sleep(time.Second * 2)</span><br><span class="line">	fmt.Println(&quot;cs &quot;, cnum)</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+    </div>
+
+    
+        <hr class="fhr">
+        <div id="vcomments"></div>
+    
+</div>
+    <div class="footer" id="footer">
+    <p><h4>版权所有 © 2020 | 作者: laotoutou | 主题 By <a class="theme-author" target="_blank" rel="noopener" href="https://github.com/Xunzhuo/hexo-theme-coder" style="font-size:14px; color: #969696">Coder</a></h4>
+    
+        <script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+        <span id="busuanzi_container_site_pv">本站浏览总访问量: <span id="busuanzi_value_site_pv"></span></span>
+        <span class="post-meta-divider">|</span>
+        <span id="busuanzi_container_site_uv">本站访问人数: <span id="busuanzi_value_site_uv"></span></span>
+    
+    <label class="el-switch el-switch-blue el-switch-sm" style="vertical-align: sub;">
+        <input type="checkbox" name="switch" id="update_style">
+        <span class="el-switch-style"></span>
+    </label>
+
+    <!--         <script type="text/javascript">
+    var cnzz_protocol = (("https:" == document.location.protocol) ? "https://" : "http://");
+    document.write(unescape("%3Cspan id='cnzz_stat_icon_1278548644'%3E%3C/span%3E%3Cscript src='" + cnzz_protocol + "v1.cnzz.com/stat.php%3Fid%3D1278548644%26show%3Dpic1' type='text/javascript'%3E%3C/script%3E"));
+    </script> -->
+</p>
+</div>
+
+<input type="hidden" id="web_style" value="black">
+<input type="hidden" id="valine_appid" value="r4ovsx6fID7L4Kk6Ptmojoq3-gzGzoHsz">
+<input type="hidden" id="valine_appKey" value="g0CyGSNMSmMSgXBn0zF3jbV9">
+
+<script src="/libs/jquery.min.js"></script>
+
+
+<script src="/libs/highlight/highlight.pack.js"></script>
+
+<script src='//cdn.jsdelivr.net/npm/valine@1.3.10/dist/Valine.min.js'></script>
+
+<script src="/js/js.js"></script>
+
+<style type="text/css">
+.v * {
+color: #698fca;
+}
+.v .vlist .vcard .vhead .vsys {
+color: #3a3e4a;
+}
+.v .vlist .vcard .vh .vmeta .vat {
+color: #638fd5;
+}
+.v .vlist .vcard .vhead .vnick {
+color: #6ba1ff;
+}
+.v a {
+color: #8696b1;
+}
+.v .vlist .vcard .vhead .vnick:hover {
+color: #669bfc;
+}
+</style>
+    <script type="text/javascript" color="173,174,173" opacity='1' zIndex="-2" count="99" src="//cdn.bootcss.com/canvas-nest.js/1.0.0/canvas-nest.min.js"></script>
+</body>
+</html>

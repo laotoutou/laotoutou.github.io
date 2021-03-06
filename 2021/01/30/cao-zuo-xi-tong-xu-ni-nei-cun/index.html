@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="renderer" content="webkit">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta name="google-site-verification" content="TZE0rZyIqLl10trYu3BWBWa1Vmz6HFwhb2OcNEK4u-s" />
+     <link rel="shortcut icon" href= /img/favicon.ico >
+    <title>
+        laotoutou
+    </title>
+    <meta name="description" content= laotoutou's blog >
+    <meta name="keywords" content= laotoutou, 黄志浩, golang >
+    
+<link rel="stylesheet" href="/libs/highlight/styles/monokai-sublime.css">
+
+    
+<link rel="stylesheet" href="/libs/font-awesome/css/font-awesome.min.css">
+
+    
+<link rel="stylesheet" href="/css/style.css">
+
+<meta name="generator" content="Hexo 5.4.0"></head>
+<body id="bodyx">
+    <div class="hd posts">
+    <a href="/index.html"><i class="fa fa-home
+ replay-btn" aria-hidden="true"></i></a>
+    <div class="post-title">
+        <p>
+            操作系统虚拟内存
+        </p>
+        <hr>
+    </div>
+    <div class="post-content">
+        <p>为什么需要虚拟内存</p>
+<ol>
+<li>现代操作系统会运行多个进程, 各个进程的运行内存空间应该是隔离的, 不允许访问其他进程的内存空间, <strong>地址隔离</strong></li>
+<li>软件运行需要指令和数据, 这些指令和数据所在的内存地址是不固定的, 否则不具备可移植性, <strong>地址独立</strong></li>
+<li>物理内存空间有限, 而不同软件运行所需的内存空间是不确定的, <strong>内存扩展</strong></li>
+<li>可以为不同的进程共享内存空间</li>
+<li>操作系统可以为不同的进程分配不连续的物理内存空间, 减少内存碎片</li>
+</ol>
+<h3 id="虚拟内存如何隔离各个进程"><a href="#虚拟内存如何隔离各个进程" class="headerlink" title="虚拟内存如何隔离各个进程"></a>虚拟内存如何隔离各个进程</h3><p>操作系统以页的方式管理内存, 每个进程内部会维护一个多级页表存储虚拟内存到物理内存的映射, 通过mmu内存管理单元为进程分配内存</p>
+<h3 id="虚拟内存如何扩展实际物理内存"><a href="#虚拟内存如何扩展实际物理内存" class="headerlink" title="虚拟内存如何扩展实际物理内存"></a>虚拟内存如何扩展实际物理内存</h3><p>在分页系统下, 进程需要的所有页面并不一定全都在内存中, 因此当访问的页面不在内存中时(通过页面的标志位判断是否在内存), 则发生<strong>缺页中断</strong>, 缺页中断服务负责将磁盘上的数据加载到内存中来, 这时如果物理内存已经没有空闲页面, 那么将发生<strong>页面交换</strong></p>
+<p>被交换出去的页面在不久又会被再次访问, 会发生<strong>内存抖动</strong>现象(频繁从磁盘读取数据), 因此需要合适的页面交换算法减少内存抖动, 常用的页面交换算法:</p>
+<ol>
+<li>随机算法</li>
+<li>先来先出算法</li>
+<li>LRU算法</li>
+<li>NRU算法(not recently used. 最近未使用算法)</li>
+</ol>
+<p>参考<br><a target="_blank" rel="noopener" href="https://book.douban.com/subject/10528447/">&lt;&lt;操作系统之哲学原理&gt;&gt;</a></p>
+
+    </div>
+
+    
+        <hr class="fhr">
+        <div id="vcomments"></div>
+    
+</div>
+    <div class="footer" id="footer">
+    <p><h4>版权所有 © 2020 | 作者: laotoutou | 主题 By <a class="theme-author" target="_blank" rel="noopener" href="https://github.com/Xunzhuo/hexo-theme-coder" style="font-size:14px; color: #969696">Coder</a></h4>
+    
+        <script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+        <span id="busuanzi_container_site_pv">本站浏览总访问量: <span id="busuanzi_value_site_pv"></span></span>
+        <span class="post-meta-divider">|</span>
+        <span id="busuanzi_container_site_uv">本站访问人数: <span id="busuanzi_value_site_uv"></span></span>
+    
+    <label class="el-switch el-switch-blue el-switch-sm" style="vertical-align: sub;">
+        <input type="checkbox" name="switch" id="update_style">
+        <span class="el-switch-style"></span>
+    </label>
+
+    <!--         <script type="text/javascript">
+    var cnzz_protocol = (("https:" == document.location.protocol) ? "https://" : "http://");
+    document.write(unescape("%3Cspan id='cnzz_stat_icon_1278548644'%3E%3C/span%3E%3Cscript src='" + cnzz_protocol + "v1.cnzz.com/stat.php%3Fid%3D1278548644%26show%3Dpic1' type='text/javascript'%3E%3C/script%3E"));
+    </script> -->
+</p>
+</div>
+
+<input type="hidden" id="web_style" value="black">
+<input type="hidden" id="valine_appid" value="r4ovsx6fID7L4Kk6Ptmojoq3-gzGzoHsz">
+<input type="hidden" id="valine_appKey" value="g0CyGSNMSmMSgXBn0zF3jbV9">
+
+<script src="/libs/jquery.min.js"></script>
+
+
+<script src="/libs/highlight/highlight.pack.js"></script>
+
+<script src='//cdn.jsdelivr.net/npm/valine@1.3.10/dist/Valine.min.js'></script>
+
+<script src="/js/js.js"></script>
+
+<style type="text/css">
+.v * {
+color: #698fca;
+}
+.v .vlist .vcard .vhead .vsys {
+color: #3a3e4a;
+}
+.v .vlist .vcard .vh .vmeta .vat {
+color: #638fd5;
+}
+.v .vlist .vcard .vhead .vnick {
+color: #6ba1ff;
+}
+.v a {
+color: #8696b1;
+}
+.v .vlist .vcard .vhead .vnick:hover {
+color: #669bfc;
+}
+</style>
+    <script type="text/javascript" color="173,174,173" opacity='1' zIndex="-2" count="99" src="//cdn.bootcss.com/canvas-nest.js/1.0.0/canvas-nest.min.js"></script>
+</body>
+</html>

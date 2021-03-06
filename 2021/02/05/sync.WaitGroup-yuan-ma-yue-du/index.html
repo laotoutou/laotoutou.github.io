@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="renderer" content="webkit">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta name="google-site-verification" content="TZE0rZyIqLl10trYu3BWBWa1Vmz6HFwhb2OcNEK4u-s" />
+     <link rel="shortcut icon" href= /img/favicon.ico >
+    <title>
+        laotoutou
+    </title>
+    <meta name="description" content= laotoutou's blog >
+    <meta name="keywords" content= laotoutou, 黄志浩, golang >
+    
+<link rel="stylesheet" href="/libs/highlight/styles/monokai-sublime.css">
+
+    
+<link rel="stylesheet" href="/libs/font-awesome/css/font-awesome.min.css">
+
+    
+<link rel="stylesheet" href="/css/style.css">
+
+<meta name="generator" content="Hexo 5.4.0"></head>
+<body id="bodyx">
+    <div class="hd posts">
+    <a href="/index.html"><i class="fa fa-home
+ replay-btn" aria-hidden="true"></i></a>
+    <div class="post-title">
+        <p>
+            sync.WaitGroup源码阅读
+        </p>
+        <hr>
+    </div>
+    <div class="post-content">
+        <p>WaitGroup用于golang的goroutine同步, 主goroutine等待子goroutine执行结束.</p>
+<p>在主goroutine中对计数器进行 <strong>Add()</strong> 操作, 与之相对的, 子goroutine执行结束时执行 <strong>Done()</strong>, 对计数器Add(-1), 同时主goroutine执行 <strong>Wait()</strong> 操作, 等待计数器为0</p>
+<p>总结就是3个方法, Add(), Done(), Wait()</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line">&#x2F;&#x2F; A WaitGroup waits for a collection of goroutines to finish.</span><br><span class="line">&#x2F;&#x2F; The main goroutine calls Add to set the number of</span><br><span class="line">&#x2F;&#x2F; goroutines to wait for. Then each of the goroutines</span><br><span class="line">&#x2F;&#x2F; runs and calls Done when finished. At the same time,</span><br><span class="line">&#x2F;&#x2F; Wait can be used to block until all goroutines have finished.</span><br><span class="line">&#x2F;&#x2F;</span><br><span class="line">&#x2F;&#x2F; A WaitGroup must not be copied after first use.</span><br><span class="line">type WaitGroup struct &#123;</span><br><span class="line">	noCopy noCopy</span><br><span class="line"></span><br><span class="line">	&#x2F;&#x2F; 64-bit value: high 32 bits are counter, low 32 bits are waiter count.</span><br><span class="line">	&#x2F;&#x2F; 64-bit atomic operations require 64-bit alignment, but 32-bit</span><br><span class="line">	&#x2F;&#x2F; compilers do not ensure it. So we allocate 12 bytes and then use</span><br><span class="line">	&#x2F;&#x2F; the aligned 8 bytes in them as state, and the other 4 as storage</span><br><span class="line">	&#x2F;&#x2F; for the sema.</span><br><span class="line">	state1 [3]uint32</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>作者开局亮大招, 这个2个字段的结构体涉及知识点: 内存对齐, 原子操作, golang禁止拷贝机制</p>
+<h3 id="Tip1-nocopy"><a href="#Tip1-nocopy" class="headerlink" title="Tip1 nocopy"></a>Tip1 nocopy</h3><p>为什么WaitGroup不允许被复制, <a target="_blank" rel="noopener" href="https://bronzesword.medium.com/what-does-nocopy-after-first-use-mean-in-golang-and-how-12396c31de47">https://bronzesword.medium.com/what-does-nocopy-after-first-use-mean-in-golang-and-how-12396c31de47</a></p>
+<blockquote>
+<p>Most of the time it is required so for safety reasons, for example you have a struct with a pointer field and you don’t want it to be copied since a shallow copy will make these two hold the same pointer and be unsafe.</p>
+</blockquote>
+<p>翻译一下是由于安全原因, 假如另一个指针指向了WaitGroup.state1的地址将是不安全的, 因为这个数组保存着计数器的值</p>
+<p>在golang中可以通过定义一个结构体, 并实现Lock()和Unlock()方法即可实现禁止拷贝, 而空结构体struct{}是0字节, 嵌套在struct中不会占用空间</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">&#x2F;&#x2F; noCopy may be embedded into structs which must not be copied</span><br><span class="line">&#x2F;&#x2F; after the first use.</span><br><span class="line">&#x2F;&#x2F;</span><br><span class="line">&#x2F;&#x2F; See https:&#x2F;&#x2F;golang.org&#x2F;issues&#x2F;8005#issuecomment-190753527</span><br><span class="line">&#x2F;&#x2F; for details.</span><br><span class="line">type noCopy struct&#123;&#125;</span><br><span class="line"></span><br><span class="line">&#x2F;&#x2F; Lock is a no-op used by -copylocks checker from &#96;go vet&#96;.</span><br><span class="line">func (*noCopy) Lock()   &#123;&#125;</span><br><span class="line">func (*noCopy) Unlock() &#123;&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="Tip2-内存对齐"><a href="#Tip2-内存对齐" class="headerlink" title="Tip2 内存对齐"></a>Tip2 内存对齐</h3><p>另外对于golang空结构体struct{}嵌套, 需要注意的是不要放在最后一位.</p>
+<p>因为struct{}不占用空间, 放在最后一位时, golang为了避免其他指针指向这个空结构体而导致指针指向了结构体之外的内存地址, golang会自动为struct{}内存对齐, 浪费了空间. 这里WaitGroup将struct{}放在了第一个位置</p>
+<p>继续看源码, WaitGroup中设计最精妙的地方</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">&#x2F;&#x2F; state returns pointers to the state and sema fields stored within wg.state1.</span><br><span class="line">func (wg *WaitGroup) state() (statep *uint64, semap *uint32) &#123;</span><br><span class="line">	if uintptr(unsafe.Pointer(&amp;wg.state1))%8 &#x3D;&#x3D; 0 &#123;</span><br><span class="line">		return (*uint64)(unsafe.Pointer(&amp;wg.state1)), &amp;wg.state1[2]</span><br><span class="line">	&#125; else &#123;</span><br><span class="line">		return (*uint64)(unsafe.Pointer(&amp;wg.state1[1])), &amp;wg.state1[0]</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>state()会被Add()和Wait()调用, 用于获取两个变量statep和semap</p>
+<p>开始灵魂发问</p>
+<h4 id="怎么理解这个statep和semap"><a href="#怎么理解这个statep和semap" class="headerlink" title="怎么理解这个statep和semap?"></a>怎么理解这个statep和semap?</h4><ul>
+<li>statep是64位变量, 而这个变量保存了2个数据: counter和waiter. 高32位保存counter, 低32位保存waiter. 具体怎么做的看Add方法</li>
+<li>semap为信号量, 执行wait的goroutine通过信号量semap阻塞(runtime_Semacquire), 等待被被子goroutine通过信号量semap唤醒(runtime_Semrelease)</li>
+</ul>
+<h4 id="为什么把waiter和counter打包"><a href="#为什么把waiter和counter打包" class="headerlink" title="为什么把waiter和counter打包"></a>为什么把waiter和counter打包</h4><p>可以看下sync.WaitGroup的提交历史, 在之前的某个版本里面, waiter、counter以及semap确实是分开的, 但是却多了一个互斥锁, 而把waiter和counter打包可以通过原子操作代替锁. 关于这个改动的review: <a target="_blank" rel="noopener" href="https://go-review.googlesource.com/c/go/+/4117/">https://go-review.googlesource.com/c/go/+/4117/</a></p>
+<h4 id="为什么要内存对齐"><a href="#为什么要内存对齐" class="headerlink" title="为什么要内存对齐?"></a>为什么要内存对齐?</h4><p>由于内存的布局, 操作系统访问内存不是按变量直接访问, 而是按照字word获取内存数据, 一次内存访问获取一个word, 比如32位架构的机器一次只能寻址32位, 也就是4字节, 所以32位机器的字长word为4字节, 而64位架构机器的字长word为8字节</p>
+<p>也就是1次内存访问可以获取1个word的数据, 假设一个8字节的int64变量没有按word内存对齐, 那么需要经历2次内存访问, 然后拼接起来才是完整的数据</p>
+<p>当然不是一定要做内存对齐, 比如redis为了减少内存浪费, 有些结构是禁止内存对齐的</p>
+<p>总结：内存对齐是为了提高数据访问效率, 提升性能</p>
+<h4 id="statep为什么要保证8字节对齐"><a href="#statep为什么要保证8字节对齐" class="headerlink" title="statep为什么要保证8字节对齐"></a>statep为什么要保证8字节对齐</h4><p><a target="_blank" rel="noopener" href="https://golang.org/pkg/sync/atomic/#pkg-note-BUG">https://golang.org/pkg/sync/atomic/#pkg-note-BUG</a></p>
+<p>64位机器可以一次访问内存的64位数据, 而32位机器访问64位数据需要两次内存访问.</p>
+<blockquote>
+<p>On ARM, x86-32, and 32-bit MIPS, it is the caller’s responsibility to arrange for 64-bit alignment of 64-bit words accessed atomically. The first word in a variable or in an allocated struct, array, or slice can be relied upon to be 64-bit aligned.</p>
+</blockquote>
+<p>翻译一下就是在32位机器上想要实现64位变量原子操作, 需要调用方保证变量是64位内存对齐的. (这是atomic包的要求)</p>
+<p>具体怎么实现的打个TODO</p>
+<h4 id="如何在不同架构-32-64-的机器上实现8字节内存对齐"><a href="#如何在不同架构-32-64-的机器上实现8字节内存对齐" class="headerlink" title="如何在不同架构(32/64)的机器上实现8字节内存对齐?"></a>如何在不同架构(32/64)的机器上实现8字节内存对齐?</h4><p>这里的要求的内存对齐是说变量地址是8字节对齐的, 即地址%8=0</p>
+<p>32位架构的机器本身可以保证是4字节对齐的, 而64位架构是8字节对齐.</p>
+<p>uint32是4字节, [3]uint32是12字节, 需要存放8字节的计数器和4字节的信号量, 这里为了原子操作计数器, 需要保证 计数器地址%8=0</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">if uint32数组地址%8&#x3D;&#x3D;0:</span><br><span class="line">	&#x2F;&#x2F; 如果把前2个uint32作为计数器, 可以保证8字节对齐.</span><br><span class="line">	&#x2F;&#x2F; 但如果后两个uint32作为计数器, 那么计数器会被分成2个4字节</span><br><span class="line">else:</span><br><span class="line">	&#x2F;&#x2F; 4字节对齐</span><br><span class="line">	&#x2F;&#x2F; 如果要让计数器8字节对齐, 需要用一个uint32来补齐前面的4字节</span><br></pre></td></tr></table></figure>
+
+<h2 id="Add"><a href="#Add" class="headerlink" title="Add"></a>Add</h2><p>继续看Add()方法</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">&#x2F;&#x2F; Add adds delta, which may be negative, to the WaitGroup counter.</span><br><span class="line">&#x2F;&#x2F; If the counter becomes zero, all goroutines blocked on Wait are released.</span><br><span class="line">&#x2F;&#x2F; If the counter goes negative, Add panics.</span><br><span class="line">&#x2F;&#x2F;</span><br><span class="line">&#x2F;&#x2F; Note that calls with a positive delta that occur when the counter is zero</span><br><span class="line">&#x2F;&#x2F; must happen before a Wait. Calls with a negative delta, or calls with a</span><br><span class="line">&#x2F;&#x2F; positive delta that start when the counter is greater than zero, may happen</span><br><span class="line">&#x2F;&#x2F; at any time.</span><br><span class="line">&#x2F;&#x2F; Typically this means the calls to Add should execute before the statement</span><br><span class="line">&#x2F;&#x2F; creating the goroutine or other event to be waited for.</span><br><span class="line">&#x2F;&#x2F; If a WaitGroup is reused to wait for several independent sets of events,</span><br><span class="line">&#x2F;&#x2F; new Add calls must happen after all previous Wait calls have returned.</span><br><span class="line">&#x2F;&#x2F; See the WaitGroup example.</span><br></pre></td></tr></table></figure>
+<p>翻译一下源码的注释: Add方法接收一个参数delta, 把delta添加到上文提到的计数器counter中, 也就是那个64位变量中, 并且delta可以为负数, 但计数器counter不能为负数, 否则主动panic, 当counter从0再变到0时, 所有被Wait方法阻塞的goroutine将被唤醒.</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br></pre></td><td class="code"><pre><span class="line">func (wg *WaitGroup) Add(delta int) &#123;</span><br><span class="line">	&#x2F;&#x2F; 调用state方法获取statep(counter和waiter) 和信号量semap</span><br><span class="line">	statep, semap :&#x3D; wg.state()</span><br><span class="line"></span><br><span class="line">	&#x2F;&#x2F; ...</span><br><span class="line"></span><br><span class="line">	&#x2F;&#x2F; statep分2部分, 高32位存储计数器counter, 将delta加到计数器中</span><br><span class="line">	state :&#x3D; atomic.AddUint64(statep, uint64(delta)&lt;&lt;32)</span><br><span class="line">	&#x2F;&#x2F; state右移32位可以取出计数器counter</span><br><span class="line">	v :&#x3D; int32(state &gt;&gt; 32)</span><br><span class="line">	&#x2F;&#x2F; 注意state是uint64, 强制转化位uint32可以取低32位, 也就是waiter</span><br><span class="line">	w :&#x3D; uint32(state)</span><br><span class="line"></span><br><span class="line">	&#x2F;&#x2F; ...</span><br><span class="line"></span><br><span class="line">	&#x2F;&#x2F; 计数器只能从0加上若干个delta后再变回0, 但是不能小于0</span><br><span class="line">	if v &lt; 0 &#123;</span><br><span class="line">		panic(&quot;sync: negative WaitGroup counter&quot;)</span><br><span class="line">	&#125;</span><br><span class="line"></span><br><span class="line">	&#x2F;&#x2F; 给计数器加delta, 但是waiter!&#x3D;0</span><br><span class="line">	&#x2F;&#x2F; waiter!&#x3D;0说明已经调用了Wait方法(获得cas锁后会给waiter+1), 这时却尝试增加计数器的值, 这是不被允许的</span><br><span class="line">	&#x2F;&#x2F; 也就是说调用Wait方法被调用后, 只能对计数器进行减操作(通过Done或者 Add负数)</span><br><span class="line">	if w !&#x3D; 0 &amp;&amp; delta &gt; 0 &amp;&amp; v &#x3D;&#x3D; int32(delta) &#123;</span><br><span class="line">		panic(&quot;sync: WaitGroup misuse: Add called concurrently with Wait&quot;)</span><br><span class="line">	&#125;</span><br><span class="line"></span><br><span class="line">	&#x2F;&#x2F; 在这里return说明是需要被wait的goroutine开始时的调用(goroutine开始时Add(1), 结束后Done())</span><br><span class="line">	if v &gt; 0 || w &#x3D;&#x3D; 0 &#123;</span><br><span class="line">		return</span><br><span class="line">	&#125;</span><br><span class="line"></span><br><span class="line">	&#x2F;&#x2F; 程序运行到这里说明调用了Wait之后, 被等待的goroutine内部调用Done或者 Add负数,</span><br><span class="line">	&#x2F;&#x2F; 且计数器counter变回了0</span><br><span class="line">	&#x2F;&#x2F; 所以这里要进行收尾工作: 重置counter和waiter, 唤醒因Wait被阻塞的goroutine</span><br><span class="line"></span><br><span class="line">	&#x2F;&#x2F; This goroutine has set counter to 0 when waiters &gt; 0.</span><br><span class="line">	&#x2F;&#x2F; Now there can&#39;t be concurrent mutations of state:</span><br><span class="line">	&#x2F;&#x2F; - Adds must not happen concurrently with Wait,</span><br><span class="line">	&#x2F;&#x2F; - Wait does not increment waiters if it sees counter &#x3D;&#x3D; 0.</span><br><span class="line">	&#x2F;&#x2F; Still do a cheap sanity check to detect WaitGroup misuse.</span><br><span class="line"></span><br><span class="line">	&#x2F;&#x2F; Add方法没有加锁, 上文使用了atomic原子操作增加statep指针指向的值</span><br><span class="line">	&#x2F;&#x2F; 但这里*statep!&#x3D;state说明有其他地方修改了*statep, 这是不被允许的</span><br><span class="line">	if *statep !&#x3D; state &#123;</span><br><span class="line">		panic(&quot;sync: WaitGroup misuse: Add called concurrently with Wait&quot;)</span><br><span class="line">	&#125;</span><br><span class="line"></span><br><span class="line">	&#x2F;&#x2F; Reset waiters count to 0.</span><br><span class="line">	&#x2F;&#x2F; 重置counter和waiter</span><br><span class="line">	*statep &#x3D; 0</span><br><span class="line"></span><br><span class="line">	&#x2F;&#x2F; runtime_Semrelease通过信号量semap唤醒被阻塞的goroutine</span><br><span class="line">	&#x2F;&#x2F; 与之相对的是Wait方法中的runtime_Semacquire</span><br><span class="line">	for ; w !&#x3D; 0; w-- &#123;</span><br><span class="line">		runtime_Semrelease(semap, false, 0)</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">&#x2F;&#x2F; Done decrements the WaitGroup counter by one.</span><br><span class="line">func (wg *WaitGroup) Done() &#123;</span><br><span class="line">	wg.Add(-1)</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="Wait"><a href="#Wait" class="headerlink" title="Wait"></a>Wait</h2><p>Wait方法会被阻塞, 直到计数器counter变为0. (Add方法会保证中间不会变成负数, 否则主动panic)</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br></pre></td><td class="code"><pre><span class="line">&#x2F;&#x2F; Wait blocks until the WaitGroup counter is zero.</span><br><span class="line">func (wg *WaitGroup) Wait() &#123;</span><br><span class="line">	&#x2F;&#x2F; 获取statep 和信号量semap</span><br><span class="line">	statep, semap :&#x3D; wg.state()</span><br><span class="line">	if race.Enabled &#123;</span><br><span class="line">		_ &#x3D; *statep &#x2F;&#x2F; trigger nil deref early</span><br><span class="line">		race.Disable()</span><br><span class="line">	&#125;</span><br><span class="line">	for &#123;</span><br><span class="line">		state :&#x3D; atomic.LoadUint64(statep)</span><br><span class="line">		&#x2F;&#x2F; 右移32获取state的高32位的counter</span><br><span class="line">		v :&#x3D; int32(state &gt;&gt; 32)</span><br><span class="line">		&#x2F;&#x2F; 强制转化位uint32, 取waiter</span><br><span class="line">		w :&#x3D; uint32(state)</span><br><span class="line"></span><br><span class="line">		&#x2F;&#x2F; 计数器counter&#x3D;0, 直接return不用阻塞</span><br><span class="line">		if v &#x3D;&#x3D; 0 &#123;</span><br><span class="line">			&#x2F;&#x2F; Counter is 0, no need to wait.</span><br><span class="line">			if race.Enabled &#123;</span><br><span class="line">				race.Enable()</span><br><span class="line">				race.Acquire(unsafe.Pointer(wg))</span><br><span class="line">			&#125;</span><br><span class="line">			return</span><br><span class="line">		&#125;</span><br><span class="line"></span><br><span class="line">		&#x2F;&#x2F; Increment waiters count.</span><br><span class="line">		&#x2F;&#x2F; 获取cas锁后为statep+1, 也就是为低32位的waiter+1</span><br><span class="line">		if atomic.CompareAndSwapUint64(statep, state, state+1) &#123;</span><br><span class="line">			&#x2F;&#x2F; ...</span><br><span class="line"></span><br><span class="line">			&#x2F;&#x2F; 被阻塞</span><br><span class="line">			runtime_Semacquire(semap)</span><br><span class="line"></span><br><span class="line">			&#x2F;&#x2F; 程序运行到这里说明goroutine被 执行Add的runtime_Semrelease的goroutine 唤醒了</span><br><span class="line">			&#x2F;&#x2F; 但是如果*statep!&#x3D;0 说明其他地方修改了statep指向的值</span><br><span class="line">			if *statep !&#x3D; 0 &#123;</span><br><span class="line">				panic(&quot;sync: WaitGroup is reused before previous Wait has returned&quot;)</span><br><span class="line">			&#125;</span><br><span class="line"></span><br><span class="line">			&#x2F;&#x2F; ...</span><br><span class="line"></span><br><span class="line">			return</span><br><span class="line">		&#125;</span><br><span class="line"></span><br><span class="line">		&#x2F;&#x2F; 没获得cas锁, 继续循环</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>参考</p>
+<p><a target="_blank" rel="noopener" href="https://bronzesword.medium.com/what-does-nocopy-after-first-use-mean-in-golang-and-how-12396c31de47">What does “nocopy after first use” mean in golang and how</a></p>
+<p><a target="_blank" rel="noopener" href="https://gfw.go101.org/article/memory-layout.html">内存布局</a></p>
+<p><a target="_blank" rel="noopener" href="https://www.luozhiyun.com/archives/429">Go中由WaitGroup引发对内存对齐思考</a></p>
+<p><a target="_blank" rel="noopener" href="https://go-review.googlesource.com/c/go/+/4117/">sync.WaitGroup将waiter和counter打包的提交历史</a></p>
+
+    </div>
+
+    
+        <hr class="fhr">
+        <div id="vcomments"></div>
+    
+</div>
+    <div class="footer" id="footer">
+    <p><h4>版权所有 © 2020 | 作者: laotoutou | 主题 By <a class="theme-author" target="_blank" rel="noopener" href="https://github.com/Xunzhuo/hexo-theme-coder" style="font-size:14px; color: #969696">Coder</a></h4>
+    
+        <script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+        <span id="busuanzi_container_site_pv">本站浏览总访问量: <span id="busuanzi_value_site_pv"></span></span>
+        <span class="post-meta-divider">|</span>
+        <span id="busuanzi_container_site_uv">本站访问人数: <span id="busuanzi_value_site_uv"></span></span>
+    
+    <label class="el-switch el-switch-blue el-switch-sm" style="vertical-align: sub;">
+        <input type="checkbox" name="switch" id="update_style">
+        <span class="el-switch-style"></span>
+    </label>
+
+    <!--         <script type="text/javascript">
+    var cnzz_protocol = (("https:" == document.location.protocol) ? "https://" : "http://");
+    document.write(unescape("%3Cspan id='cnzz_stat_icon_1278548644'%3E%3C/span%3E%3Cscript src='" + cnzz_protocol + "v1.cnzz.com/stat.php%3Fid%3D1278548644%26show%3Dpic1' type='text/javascript'%3E%3C/script%3E"));
+    </script> -->
+</p>
+</div>
+
+<input type="hidden" id="web_style" value="black">
+<input type="hidden" id="valine_appid" value="r4ovsx6fID7L4Kk6Ptmojoq3-gzGzoHsz">
+<input type="hidden" id="valine_appKey" value="g0CyGSNMSmMSgXBn0zF3jbV9">
+
+<script src="/libs/jquery.min.js"></script>
+
+
+<script src="/libs/highlight/highlight.pack.js"></script>
+
+<script src='//cdn.jsdelivr.net/npm/valine@1.3.10/dist/Valine.min.js'></script>
+
+<script src="/js/js.js"></script>
+
+<style type="text/css">
+.v * {
+color: #698fca;
+}
+.v .vlist .vcard .vhead .vsys {
+color: #3a3e4a;
+}
+.v .vlist .vcard .vh .vmeta .vat {
+color: #638fd5;
+}
+.v .vlist .vcard .vhead .vnick {
+color: #6ba1ff;
+}
+.v a {
+color: #8696b1;
+}
+.v .vlist .vcard .vhead .vnick:hover {
+color: #669bfc;
+}
+</style>
+    <script type="text/javascript" color="173,174,173" opacity='1' zIndex="-2" count="99" src="//cdn.bootcss.com/canvas-nest.js/1.0.0/canvas-nest.min.js"></script>
+</body>
+</html>
